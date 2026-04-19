@@ -73,6 +73,31 @@ codeunit 50200 "Isolated"
             finally { Remove-Item -Path $root -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
+        It 'excludes Subtype = TestRunner codeunits' {
+            $root = New-TempFolder
+            try {
+                $folder = New-AppFolder -Root $root -AppId 'rrr' -AppName 'AppRunner'
+                New-ALFile -Folder $folder -Name 'Runner.al' -Content @'
+codeunit 130451 "Custom Runner"
+{
+    Subtype = TestRunner;
+    TestIsolation = Codeunit;
+}
+
+codeunit 50500 "Real Test"
+{
+    Subtype = Test;
+    RequiredTestIsolation = Codeunit;
+}
+'@
+                $meta = Get-ALTestCodeunitMetadata -TestAppIds @{ 'rrr' = $folder }
+                $meta.Count | Should -Be 1
+                $meta[0].codeunitId | Should -Be 50500
+                ($meta | Where-Object codeunitId -eq 130451) | Should -BeNullOrEmpty
+            }
+            finally { Remove-Item -Path $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
         It 'skips non-test codeunits' {
             $root = New-TempFolder
             try {
@@ -235,6 +260,18 @@ codeunit 50401 "Second Test"
             ($warnings -join "`n") | Should -Match '99999'
         }
 
+        It 'fallback warning names the BcContainerHelper default when defaultRunnerCodeunitId is 0' {
+            $settings = [ordered]@{ } + $script:defaultSettings
+            $settings.runners = [ordered]@{ Disabled = 0; Codeunit = 0; Function = 0 }
+            $settings.defaultRunnerCodeunitId = 0
+            $settings.failOnMissingRequiredIsolationRunner = $false
+            $meta = @(
+                @{ appId = 'x'; codeunitId = 1; codeunitName = 'A'; requiredIsolation = 'Function'; testType = 'UnitTest'; filePath = 'f.al' }
+            )
+            Group-ALTestsByIsolation -Metadata $meta -Settings $settings -WarningVariable warnings -WarningAction SilentlyContinue | Out-Null
+            ($warnings -join "`n") | Should -Match 'BcContainerHelper default runner'
+        }
+
         It 'returns empty array for empty metadata' {
             $partitions = Group-ALTestsByIsolation -Metadata @() -Settings $script:defaultSettings
             $partitions.Count | Should -Be 0
@@ -252,6 +289,7 @@ codeunit 50401 "Second Test"
                 [CmdletBinding()]
                 Param(
                     [string] $testCodeunit,
+                    [string] $testCodeunitRange,
                     [string] $testRunnerCodeunitId,
                     [string] $extensionId,
                     [string] $containerName,
@@ -266,6 +304,7 @@ codeunit 50401 "Second Test"
                 )
                 $call = [pscustomobject]@{
                     testCodeunit            = $testCodeunit
+                    testCodeunitRange       = $testCodeunitRange
                     testRunnerCodeunitId    = $testRunnerCodeunitId
                     extensionId             = $extensionId
                     containerName           = $containerName
@@ -294,7 +333,7 @@ codeunit 50401 "Second Test"
             $sb | Should -BeOfType [scriptblock]
         }
 
-        It 'invokes Run-TestsInBcContainer once per codeunit with partition runner id and preserves append params' {
+        It 'invokes Run-TestsInBcContainer once per partition with codeunit-range filter and preserves append params' {
             $partitions = @(
                 @{
                     runnerCodeunitId = 130451
@@ -320,22 +359,50 @@ codeunit 50401 "Second Test"
             $result = & $sb $incoming
 
             $result | Should -Be $true
-            $script:RunTestsInvocations.Count | Should -Be 2
-            ($script:RunTestsInvocations | Where-Object { $_.testCodeunit -eq '50100' -and $_.testRunnerCodeunitId -eq '130451' -and $_.AppendToJUnitResultFile }).Count | Should -Be 1
-            ($script:RunTestsInvocations | Where-Object { $_.testCodeunit -eq '50101' -and $_.extensionId -eq 'app-a' }).Count | Should -Be 1
+            $script:RunTestsInvocations.Count | Should -Be 1
+            $script:RunTestsInvocations[0].testCodeunitRange | Should -Be '50100|50101'
+            $script:RunTestsInvocations[0].testRunnerCodeunitId | Should -Be '130451'
+            $script:RunTestsInvocations[0].AppendToJUnitResultFile | Should -Be $true
+            $script:RunTestsInvocations[0].extensionId | Should -Be 'app-a'
         }
 
-        It 'returns $false if any codeunit fails' {
-            $script:RunTestsResponse = { param($call) $call.testCodeunit -ne '50101' }
+        It 'invokes once per partition when partitions differ in isolation' {
+            $partitions = @(
+                @{
+                    runnerCodeunitId = 130451; isolationLabel = 'Codeunit'; testType = 'UnitTest'
+                    codeunits = @(
+                        @{ appId = 'a'; codeunitId = 50100; codeunitName = 'X'; requiredIsolation = 'Codeunit'; testType = 'UnitTest'; filePath = '' }
+                    )
+                }
+                @{
+                    runnerCodeunitId = 130452; isolationLabel = 'Function'; testType = 'UnitTest'
+                    codeunits = @(
+                        @{ appId = 'a'; codeunitId = 50200; codeunitName = 'Y'; requiredIsolation = 'Function'; testType = 'UnitTest'; filePath = '' }
+                    )
+                }
+            )
+            $sb = New-PartitionedTestRunnerScriptBlock -Partitions $partitions
+            & $sb @{ extensionId = 'a'; containerName = 'dummy' } | Out-Null
+
+            $script:RunTestsInvocations.Count | Should -Be 2
+            ($script:RunTestsInvocations | Where-Object testRunnerCodeunitId -eq '130451').testCodeunitRange | Should -Be '50100'
+            ($script:RunTestsInvocations | Where-Object testRunnerCodeunitId -eq '130452').testCodeunitRange | Should -Be '50200'
+        }
+
+        It 'returns $false if any partition fails' {
+            $script:RunTestsResponse = { param($call) $call.testRunnerCodeunitId -ne '130452' }
 
             $partitions = @(
                 @{
-                    runnerCodeunitId = 0
-                    isolationLabel   = 'None'
-                    testType         = 'UnitTest'
-                    codeunits        = @(
-                        @{ appId = 'a'; codeunitId = 50100; codeunitName = 'OK';   requiredIsolation = 'None'; testType = 'UnitTest'; filePath = '' }
-                        @{ appId = 'a'; codeunitId = 50101; codeunitName = 'FAIL'; requiredIsolation = 'None'; testType = 'UnitTest'; filePath = '' }
+                    runnerCodeunitId = 130451; isolationLabel = 'Codeunit'; testType = 'UnitTest'
+                    codeunits = @(
+                        @{ appId = 'a'; codeunitId = 50100; codeunitName = 'OK'; requiredIsolation = 'Codeunit'; testType = 'UnitTest'; filePath = '' }
+                    )
+                }
+                @{
+                    runnerCodeunitId = 130452; isolationLabel = 'Function'; testType = 'UnitTest'
+                    codeunits = @(
+                        @{ appId = 'a'; codeunitId = 50200; codeunitName = 'FAIL'; requiredIsolation = 'Function'; testType = 'UnitTest'; filePath = '' }
                     )
                 }
             )
@@ -361,9 +428,10 @@ codeunit 50401 "Second Test"
 
             $script:RunTestsInvocations.Count | Should -Be 1
             $script:RunTestsInvocations[0].hasRunnerId | Should -Be $false
+            $script:RunTestsInvocations[0].testCodeunitRange | Should -Be '50100'
         }
 
-        It 'skips codeunits from other apps' {
+        It 'skips codeunits from other apps in the range filter' {
             $partitions = @(
                 @{
                     runnerCodeunitId = 0; isolationLabel = 'None'; testType = 'UnitTest'
@@ -377,7 +445,7 @@ codeunit 50401 "Second Test"
             & $sb @{ extensionId = 'a'; containerName = 'dummy' } | Out-Null
 
             $script:RunTestsInvocations.Count | Should -Be 1
-            $script:RunTestsInvocations[0].testCodeunit | Should -Be '1'
+            $script:RunTestsInvocations[0].testCodeunitRange | Should -Be '1'
         }
 
         It 'returns $true and invokes nothing when no codeunits match the app' {

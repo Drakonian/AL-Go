@@ -141,7 +141,8 @@ function Group-ALTestsByIsolation {
             if ($Settings.failOnMissingRequiredIsolationRunner) {
                 throw "No test runner mapped for RequiredTestIsolation = $iso (codeunit $($item.codeunitId) '$($item.codeunitName)' in $($item.filePath)). Configure testIsolation.runners.$iso or set testIsolation.failOnMissingRequiredIsolationRunner = false."
             }
-            Write-Warning "No test runner mapped for RequiredTestIsolation = $iso (codeunit $($item.codeunitId) '$($item.codeunitName)'). Falling back to defaultRunnerCodeunitId = $($Settings.defaultRunnerCodeunitId). Tests may fail if the default runner's TestIsolation does not satisfy the codeunit's requirement."
+            $defaultRunnerLabel = if ([int] $Settings.defaultRunnerCodeunitId -gt 0) { "defaultRunnerCodeunitId = $($Settings.defaultRunnerCodeunitId)" } else { "the BcContainerHelper default runner (defaultRunnerCodeunitId = 0)" }
+            Write-Warning "No test runner mapped for RequiredTestIsolation = $iso (codeunit $($item.codeunitId) '$($item.codeunitName)'). Falling back to $defaultRunnerLabel. Tests may fail if the fallback runner's TestIsolation does not satisfy the codeunit's requirement."
             $runnerId = [int] $Settings.defaultRunnerCodeunitId
         }
 
@@ -167,11 +168,18 @@ function New-PartitionedTestRunnerScriptBlock {
             override. Run-AlPipeline invokes the override once per test app; our
             scriptblock takes the hashtable of parameters it built (containing
             extensionId, containerName, disabledTests, JUnit/XUnit file, auth, etc.)
-            and invokes Run-TestsInBcContainer once per (partition, codeunit) that
-            belongs to the current app. Each invocation forces -testCodeunit to a
-            single id and -testRunnerCodeunitId to the partition's mapped runner.
-            Result-file appending is preserved because we forward the file params
-            Run-AlPipeline already set (AppendTo*ResultFile = $true).
+            and invokes Run-TestsInBcContainer once per partition that has codeunits
+            in the current app. Each invocation forces -testCodeunitRange to the
+            BC filter expression covering the partition's codeunit ids and
+            -testRunnerCodeunitId to the partition's mapped runner. Result-file
+            appending is preserved because we forward the file params Run-AlPipeline
+            already set (AppendTo*ResultFile = $true).
+
+            Note: testCodeunitRange relies on BC's cmdline-testtool filter syntax;
+            BcContainerHelper warns this "might not work on all versions of BC".
+            If you hit a version that rejects the filter, fall back is to declare
+            the affected codeunits as RequiredTestIsolation = None so they share
+            the default runner partition.
         .PARAMETER Partitions
             Output of Group-ALTestsByIsolation. Closed over by the returned scriptblock.
         .OUTPUTS
@@ -196,20 +204,20 @@ function New-PartitionedTestRunnerScriptBlock {
             $cusInApp = @($p.codeunits | Where-Object { "$($_.appId)" -eq $appId })
             if ($cusInApp.Count -eq 0) { continue }
 
-            foreach ($cu in $cusInApp) {
-                $call = @{}
-                foreach ($k in $parameters.Keys) { $call[$k] = $parameters[$k] }
-                $call['testCodeunit'] = "$($cu.codeunitId)"
-                if ([int]$p.runnerCodeunitId -gt 0) {
-                    $call['testRunnerCodeunitId'] = "$($p.runnerCodeunitId)"
-                }
+            $idFilter = (($cusInApp | ForEach-Object { $_.codeunitId }) -join '|')
 
-                Write-Host "Running codeunit $($cu.codeunitId) '$($cu.codeunitName)' isolation=$($p.isolationLabel) type=$($p.testType) runner=$($p.runnerCodeunitId) app=$appId"
-                $invocations++
-
-                $passed = Run-TestsInBcContainer @call
-                if (-not $passed) { $allPassed = $false }
+            $call = @{}
+            foreach ($k in $parameters.Keys) { $call[$k] = $parameters[$k] }
+            $call['testCodeunitRange'] = $idFilter
+            if ([int]$p.runnerCodeunitId -gt 0) {
+                $call['testRunnerCodeunitId'] = "$($p.runnerCodeunitId)"
             }
+
+            Write-Host "Running partition isolation=$($p.isolationLabel) type=$($p.testType) runner=$($p.runnerCodeunitId) app=$appId codeunits=$($cusInApp.Count) range=$idFilter"
+            $invocations++
+
+            $passed = Run-TestsInBcContainer @call
+            if (-not $passed) { $allPassed = $false }
         }
 
         Write-Host "Partitioned test run for app $appId complete. Invocations: $invocations. All passed: $allPassed"

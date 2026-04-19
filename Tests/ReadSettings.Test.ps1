@@ -346,6 +346,28 @@ InModuleScope ReadSettings { # Allows testing of private functions
             }
         }
 
+        It 'testIsolation rejects unknown properties' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+            $defaultSettings = GetDefaultSettings
+            $defaultSettings.testIsolation.typoKey = 'oops'
+            try {
+                Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema -ErrorAction Stop
+            }
+            catch {
+                $_.Exception.Message | Should -Match "typoKey"
+            }
+        }
+
+        It 'testIsolation.runners rejects unknown isolation keys' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+            $defaultSettings = GetDefaultSettings
+            $defaultSettings.testIsolation.runners.None = 123
+            try {
+                Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema -ErrorAction Stop
+            }
+            catch {
+                $_.Exception.Message | Should -Match "/testIsolation/runners/None"
+            }
+        }
+
         It 'overwriteSettings property resets settings from destination object (simple types)' {
             $dst = [ordered]@{
                 setting1 = "value1"

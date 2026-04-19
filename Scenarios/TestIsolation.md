@@ -54,7 +54,7 @@ Before invoking `Run-AlPipeline`, AL-Go:
 1. Scans `.al` files in your test folders and extracts every test codeunit's `RequiredTestIsolation` and `TestType` property values.
 2. Groups the codeunits by `(RequiredTestIsolation, TestType)` and applies `testTypeFilter`.
 3. Maps each group to the configured runner codeunit id.
-4. Registers a `RunTestsInBcContainer` scriptblock override that, for each test app, invokes `Run-TestsInBcContainer` once per codeunit using the partition's runner. Results are appended into the same JUnit file that downstream reporting already consumes.
+4. Registers a `RunTestsInBcContainer` scriptblock override that, for each test app, invokes `Run-TestsInBcContainer` once per partition. Each invocation passes the partition's mapped runner via `-testRunnerCodeunitId` and the partition's codeunits as a `|`-separated `-testCodeunitRange` filter. Results are appended into the same JUnit file that downstream reporting already consumes.
 
 Container lifecycle, app installation, and `disabledTests.json` discovery continue to be handled by `Run-AlPipeline` exactly as before.
 

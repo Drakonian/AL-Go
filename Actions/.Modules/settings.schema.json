@@ -343,6 +343,7 @@
                         "Function": { "type": "integer", "minimum": 0 }
                     },
                     "required": [ "Disabled", "Codeunit", "Function" ],
+                    "additionalProperties": false,
                     "description": "Map of RequiredTestIsolation value to the test runner codeunit ID whose TestIsolation property satisfies it. 0 = unmapped."
                 },
                 "testTypeFilter": {
@@ -359,6 +360,7 @@
                 }
             },
             "required": [ "enabled", "defaultRunnerCodeunitId", "runners", "testTypeFilter", "failOnMissingRequiredIsolationRunner" ],
+            "additionalProperties": false,
             "description": "See https://aka.ms/ALGoSettings#testIsolation"
         },
         "rulesetFile": {
