@@ -1,3 +1,26 @@
+### Test Isolation — run tests under the runner their codeunits require
+
+With BC runtime 16 (2025 release wave 2) Microsoft introduced the [`RequiredTestIsolation` property](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/properties/devenv-requiredtestisolation-property) on test codeunits and called out CI/CD pipelines as an intended integration point. AL-Go for GitHub now supports it.
+
+When `testIsolation.enabled` is set in your settings, AL-Go scans test codeunits for their `RequiredTestIsolation` and `TestType` properties, groups the codeunits accordingly, and invokes a matching test runner codeunit per group — so codeunits declaring `RequiredTestIsolation = Function` run under a `TestIsolation = Function` runner, and so on. Results are merged back into the same JUnit file downstream reporting already consumes; container lifecycle and `disabledTests.json` handling are unchanged.
+
+Enable it by adding:
+
+```json
+{
+  "testIsolation": {
+    "enabled": true,
+    "runners": {
+      "Disabled": 130450,
+      "Codeunit": 130451,
+      "Function": 130452
+    }
+  }
+}
+```
+
+See the full settings reference and compatibility notes in [Test Isolation](Scenarios/TestIsolation.md). The feature is opt-in — existing projects are unaffected unless they set `testIsolation.enabled = true`.
+
 ### Issues
 
 - Issue 2204 - Workspace compilation ignores vsixFile setting

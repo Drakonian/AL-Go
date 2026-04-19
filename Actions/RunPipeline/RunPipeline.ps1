@@ -487,6 +487,33 @@ try {
     $runAlPipelineParams["preprocessorsymbols"] = $settings.preprocessorSymbols
     $runAlPipelineParams["features"] = $settings.features
 
+    if ($settings.testIsolation.enabled -and -not $settings.doNotRunTests -and $testFolders -and $testFolders.Count -gt 0) {
+        Write-Host "Test isolation enabled - partitioning test runs by RequiredTestIsolation / TestType"
+        Import-Module (Join-Path $PSScriptRoot "..\.Modules\TestIsolation.psm1" -Resolve)
+
+        $testAppIds = [ordered]@{}
+        foreach ($tf in $testFolders) {
+            $appJsonPath = Join-Path $tf "app.json"
+            if (Test-Path $appJsonPath) {
+                $aj = Get-Content $appJsonPath -Raw -Encoding utf8 | ConvertFrom-Json
+                if ($aj.Id) { $testAppIds["$($aj.Id)"] = $tf }
+            }
+        }
+
+        $metadata = Get-ALTestCodeunitMetadata -TestAppIds $testAppIds
+        Write-Host "Discovered $($metadata.Count) test codeunit(s) across $($testAppIds.Count) test app folder(s)"
+
+        if ($metadata.Count -gt 0) {
+            $partitions = Group-ALTestsByIsolation -Metadata $metadata -Settings $settings.testIsolation
+            $partitionSummary = ($partitions | ForEach-Object { "$($_.isolationLabel)/$($_.testType)=$($_.codeunits.Count)" }) -join '; '
+            Write-Host "Partitioned into $($partitions.Count) group(s): $partitionSummary"
+            $runAlPipelineParams["RunTestsInBcContainer"] = New-PartitionedTestRunnerScriptBlock -Partitions $partitions
+        }
+        else {
+            Write-Host "No test codeunits found - falling back to default Run-AlPipeline test behavior"
+        }
+    }
+
     Write-Host "Invoke Run-AlPipeline with buildmode $buildMode"
     Run-AlPipeline @runAlPipelineParams `
         -accept_insiderEula `

@@ -310,6 +310,42 @@ InModuleScope ReadSettings { # Allows testing of private functions
             Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema | Should -Be $true
         }
 
+        It 'testIsolation setting has expected default shape' {
+            $defaultSettings = GetDefaultSettings
+            $defaultSettings.testIsolation.enabled | Should -Be $false
+            $defaultSettings.testIsolation.defaultRunnerCodeunitId | Should -Be 0
+            $defaultSettings.testIsolation.runners.Disabled | Should -Be 0
+            $defaultSettings.testIsolation.runners.Codeunit | Should -Be 0
+            $defaultSettings.testIsolation.runners.Function | Should -Be 0
+            $defaultSettings.testIsolation.testTypeFilter | Should -BeNullOrEmpty
+            $defaultSettings.testIsolation.failOnMissingRequiredIsolationRunner | Should -Be $true
+        }
+
+        It 'testIsolation rejects invalid testTypeFilter values' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+            $defaultSettings = GetDefaultSettings
+            $defaultSettings.testIsolation.testTypeFilter = @("UnitTest", "NotAValidType")
+            try {
+                Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema
+            }
+            catch {
+                $_.Exception.Message | Should -Match "testTypeFilter"
+            }
+
+            $defaultSettings.testIsolation.testTypeFilter = @("UnitTest", "IntegrationTest", "Uncategorized", "AITest")
+            Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema | Should -Be $true
+        }
+
+        It 'testIsolation rejects negative runner codeunit IDs' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+            $defaultSettings = GetDefaultSettings
+            $defaultSettings.testIsolation.defaultRunnerCodeunitId = -1
+            try {
+                Test-Json -json (ConvertTo-Json $defaultSettings -Depth 99) -schema $schema
+            }
+            catch {
+                $_.Exception.Message | Should -Match "defaultRunnerCodeunitId"
+            }
+        }
+
         It 'overwriteSettings property resets settings from destination object (simple types)' {
             $dst = [ordered]@{
                 setting1 = "value1"
